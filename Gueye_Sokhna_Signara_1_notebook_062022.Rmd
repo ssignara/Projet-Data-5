@@ -1,0 +1,1279 @@
+# Analyse des ventes du site web Lapage
+
+### Importation des données
+
+```{r echo=TRUE}
+clients <- read.csv("customers.csv", header = TRUE)
+produits <- read.csv("products.csv", header = TRUE)
+transactions <- read.csv("transactions.csv", header = TRUE)
+```
+
+### Vérification de la présence d'éventuels outliers
+
+```{r echo=TRUE}
+summary(clients)
+summary(produits)
+summary(transactions)
+```
+
+*Nous observons qu'il y a au moins un prix négatif au sein du dataframe "produits". Nous prendrons le parti de le(s) remplacer par la moyenne à savoir 21,86. Nous allons également transposer les catégories en facteurs.*
+
+```{r echo=TRUE}
+produits$categ <- as.factor(produits$categ)
+```
+
+#### Suppression des prix négatifs
+
+*Commençons par créer une copie de "produits", "clients" et "transactions :*
+
+```{r echo=TRUE}
+prod <- produits
+clients2 <- clients
+trans <- transactions
+```
+
+*Remplaçons maintenant les valeurs négatives par la moyenne :*
+
+```{r echo=TRUE}
+prod$price[prod$price<=0] <- 21.86
+```
+
+*Assurons nous qu'il n'y ait plus de prix négatif :*
+
+```{r echo=TRUE}
+summary(prod)
+```
+
+*Tout est ok ✓.*
+
+#### Vérification de la présence d'id aberrants
+
+```{r echo=TRUE}
+outlier_prod <- unique(prod$id_prod)
+outlier_client <- unique(clients2$client_id)
+```
+
+*En observant le dataframe "transactions", nous nous apercevons de la présence de transactions test, toutes effectuées à la même date (2021-03-01) par des clients fictifs (ct_0 et ct_1) sur le même produit (T_0).*
+
+```{r echo=TRUE}
+head(sort(outlier_prod, decreasing = TRUE))
+head(sort(outlier_client, decreasing = TRUE))
+```
+
+#### Suppression des id aberrants
+
+*Vérifions le prix du produit correspondant à l'id T_0 :*
+
+```{r echo=TRUE}
+prod$price[prod$id_prod == "T_0"]
+```
+
+*Au vue de la structure de leurs id, il semblerait qu'il s'agisse de transactions tests réalisées probablement lors du lancement du site. Nous décidons donc de supprimer le produit, les clients ainsi que les transactions associées à ces derniers :*
+
+```{r echo=TRUE}
+prod_t <- which(prod$id_prod == "T_0")
+prod <- prod[-prod_t,]
+```
+
+```{r echo=TRUE}
+clients_t0 <- which(clients2$client_id == "ct_0")
+clients_t1 <- which(clients2$client_id == "ct_1")
+clients2 <- clients2[-clients_t1,]
+clients2 <- clients2[-clients_t0,]
+```
+
+```{r echo=TRUE}
+trans_t <- which(trans$id_prod == "T_0")
+trans <- trans[-trans_t,]
+```
+
+*Tout a bien été supprimé ✓.*
+
+### Vérification de la présence de clients inactifs et analyse de ces derniers
+
+#### Isolement des clients inactifs
+
+```{r echo=TRUE}
+id_clients1 <- unique(clients2$client_id)
+id_clients2 <- unique(trans$client_id) 
+id_clients3 <- intersect(id_clients1, id_clients2)
+```
+
+*Nous avons un total de 21 clients inactifs au sein de notre base de données. Isolons les afin d'en analyser, par la suite, les profils.*
+
+```{r echo=TRUE}
+clients_actifs <- which(is.element(clients2$client_id, id_clients3))
+clients_i <- clients2[-clients_actifs,]
+age <- 2023-clients_i$birth
+clients_i <- data.frame(clients_i, age)
+head(clients_i)
+```
+
+#### Profils des clients inactifs
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+clients_inactifs <- clients_i %>% group_by(sex) %>% summarise(nb = n(), prop = round(nb/21*100, digits = 2), age_moyen = round(sum(age)/nb, digits = 2))
+clients_inactifs_age <- clients_i %>% group_by(age) %>% summarise(nb = n(), prop = round(nb/21*100, digits = 2))
+head(clients_inactifs)
+head(clients_inactifs_age)
+```
+
+```{r echo=TRUE}
+library(ggplot2)
+library(hrbrthemes)
+
+ggplot(clients_inactifs, aes(x=sex, y=age_moyen)) + 
+  geom_bar(stat = "identity", width=0.5) +
+  ylab("Âge moyen") +
+  xlab("Sexe") +
+  ggtitle("Âge moyen des clients inactifs en fonction du sexe") +
+  theme_ipsum() +
+  coord_flip()
+```
+
+```{r echo=TRUE}
+library(ggplot2)
+library(hrbrthemes)
+
+ggplot(clients_inactifs_age, aes(x=nb, y=age, fill=nb)) +
+  ggtitle("Répartition des clients inactifs en fonction de leur âge") +
+  xlab("Nombre de personnes") +
+  ylab("Âge des clients") +
+  theme_ipsum() +
+  geom_violin()
+```
+
+```{r echo=TRUE}
+library(ggplot2)
+
+clients_inactifs$ymax <- cumsum(clients_inactifs$prop)
+clients_inactifs$ymin <- c(0, head(clients_inactifs$ymax, n=-1))
+clients_inactifs$labelPosition <- (clients_inactifs$ymax + clients_inactifs$ymin) / 2
+clients_inactifs$label <- paste0(clients_inactifs$sex, "\n proportion(en %): \n", clients_inactifs$prop)
+ggplot(clients_inactifs, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=sex)) +
+  geom_rect() +
+  geom_label( x=3.5, aes(y=labelPosition, label=label), size=6) +
+  scale_fill_brewer(palette=4) +
+  coord_polar(theta="y") +
+  xlim(c(2, 4)) +
+  ggtitle("Répartition des clients inactifs en fonction du sexe") +
+  theme_void() +
+  theme(legend.position = "none")
+```
+
+*Nous pouvons maintenant continuer en n'utilisant que les clients actifs :*
+
+```{r echo=TRUE}
+clients2 <- clients2[is.element (clients2$client_id, id_clients3),]
+head(clients2)
+```
+
+### Vérification de la présence de produits invendus et analyse de ces derniers
+
+#### Isolement des produits jamais vendus
+
+```{r echo=TRUE}
+id_prod1 <- unique(prod$id_prod)
+id_prod2 <- unique(trans$id_prod) 
+id_prod3 <- intersect(id_prod1, id_prod2)
+```
+
+*21 références présentes dans la table des produits n'ont jamais été achetées. Isolons-les également afin d'en analyser, par la suite, les caractéristiques :*
+
+```{r echo=TRUE}
+ref_vendues <- which(is.element(prod$id_prod, id_prod3))
+ref_invendues <- prod[-ref_vendues,]
+head(ref_invendues)
+```
+
+#### Caractéristiques des références invendues
+
+*Commençons par classer les références invendues en fonction de leurs catégories :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+ref_invendues_categ <- ref_invendues %>% group_by(categ) %>% summarise(nb = n(), prop = round(nb/21*100, digits = 2), prix_moyen = round(sum(price)/nb, digits = 2))
+head(ref_invendues_categ)
+```
+*Représentons graphiquement ce dataframe afin d'en faciliter la compréhension :*
+
+```{r echo=TRUE}
+library(ggplot2)
+library(hrbrthemes)
+
+ggplot(ref_invendues_categ, aes(fill=categ, y=prop, x="Références")) + 
+    geom_bar(position="fill", stat="identity") +
+    ylab("Proportion") +
+    theme_ipsum() +
+    ggtitle("Répartition des catégories des produits invendus")
+```
+
+*La catégorie 0 est la plus largement représentée dans les références invendues.*
+*Intéressons nous maintenant aux prix des références invendues :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+ref_invendues_price <- ref_invendues %>% group_by(categ) %>% summarise(nb = n(), prop = round(nb/21*100, digits = 2), prix_moyen = round(sum(price)/nb, digits = 2))
+head(ref_invendues_price)
+```
+
+*Représentons graphiquement la répartition des prix des références invendues :*
+
+```{r echo=TRUE}
+library(ggplot2)
+
+ref_invendues %>%
+  ggplot( aes(x=price)) +
+    geom_density(fill="#69b3a2", color="#e9ecef", alpha=0.8) +
+    xlab("Prix") +
+    ylab("Densité") +
+    theme_ipsum() +
+    ggtitle("Répartition des prix des références invendues")
+```
+
+*Et avec une toute autre représentation :*
+
+```{r echo=TRUE}
+library(ggplot2)
+
+ggplot(ref_invendues, aes(x="Références", y=price)) + 
+    geom_boxplot(fill="slateblue", alpha=0.5) +
+    ylab("Prix") +
+    theme_ipsum() +
+    ggtitle("Répartition des prix des références invendues")
+```
+
+*La catégorie 0 étant la plus représentée dans cet échantillon, il n'est pas étonnant que la grosse majorité des prix soit inférieure à 50€ (la catégorie 0 ayant le prix moyen le plus faible).*
+*Qu'en est-il de la répartition des prix par catégorie ?*
+
+```{r echo=TRUE}
+library(ggplot2)
+
+ggplot(ref_invendues, aes(x=as.factor(categ), y=price)) + 
+    geom_boxplot(fill="slateblue", alpha=0.2) + 
+    xlab("Catégorie") +
+    ylab("Prix") +
+    theme_ipsum() +
+    ggtitle("Répartition des prix par catégorie")
+```
+
+*Poursuivons maintenant en utilisant uniquement les références vendues :*
+
+```{r echo=TRUE}
+prod <- prod[is.element (prod$id_prod, id_prod3),]
+```
+
+### Vérification de la présence de doublons
+
+```{r echo=TRUE}
+doublons_c <- sum(duplicated(clients2$client_id))
+doublons_p <- sum(duplicated(prod$id_prod))
+doublons_t <- sum(duplicated(trans$session_id))
+```
+
+*Nous n'avons pas de doublons dans les dataframes "prod" et "clients". En ce qui concerne les transactions, nous n'avons pas de clé primaire relative à celles-ci et il est raisonnable d'avoir des doublons au niveau des session_id dans la mesure où plusieurs transactions peuvent intervenir lors d'une même session.*
+
+### Vérification de la présence de NA
+
+```{r echo=TRUE}
+na_p <- which(is.na(prod))
+na_c <- which(is.na(clients2))
+na_t <- which(is.na(trans))
+na_p
+na_c
+na_t
+```
+
+*Nous n'avons pas de NA ✓.*
+
+### Création du dataframe global
+
+*Commençons par vérifier la classe des dates que nous avons :*
+
+```{r echo=TRUE}
+str(trans$date)
+```
+
+*Convertissons la chaîne de charactère en date afin de faciliter la manipulation de celles-ci :*
+
+```{r echo=TRUE}
+trans$date <- as.Date(trans$date)
+```
+
+*Assurons nous que le changement a bien été effectué :*
+
+```{r echo=TRUE}
+str(trans$date)
+```
+
+*Changement opéré ✓.*
+
+#### Jointure entre les transactions et les produits
+
+```{r echo=TRUE}
+df1 <- merge(trans, prod, all = T)
+head(df1)
+```
+
+*Nous avons opté pour une jointure externe afin de conserver l'intégralité des lignes de nos dataframes. Vérifions maintenant si nous avons des NAs dans ce nouveau dataframe, et si oui, où ils se trouvent :*
+
+```{r echo=TRUE}
+summary(df1)
+```
+
+*Nous avons des données manquantes au niveau des prix et des catégories. Étant donné que nous avions préalablement vérifié s'il y avait des NAs dans nos différentes tables, nous pouvons supposer que la table des transactions contenait un id_prod qui n'est pas présent dans la table des produits et qui s'est retrouvé dans df1 suite à la jointure. Vérifions cette hypothèse :*
+
+```{r echo=TRUE}
+id_prod21 <- unique(df1$id_prod)
+id_prod22 <- unique(prod$id_prod) 
+id_prod23 <- intersect(id_prod1, id_prod2)
+non_na <- which(is.element(df1$id_prod, id_prod23))
+na <- df1[-non_na,]
+```
+
+*Nous avons effectivement un id_produit présent dans df1 mais pas dans la table des produits et au vue de sa syntaxe, nous pouvons conclure qu'il appartient à la catégorie 0. Nous allons donc remplacer les NAs par la catégorie 0 et par le prix moyen constaté pour cette même catégorie :*
+
+```{r echo=TRUE}
+pm_0 <- mean(produits[(produits$categ == 0),]$price)
+pm_0
+```
+
+```{r echo=TRUE}
+df1$price[df1$id_prod=="0_2245"] <- pm_0
+df1$categ[df1$id_prod=="0_2245"] <- 0
+```
+
+*Vérifions qu'il n'y a plus de NAs au niveau des prix et des catégories :*
+
+```{r echo=TRUE}
+summary(df1)
+```
+
+*C'est parfait ✓.*
+
+#### Jointure entre df1 et les clients
+
+```{r echo=TRUE}
+clients2$age <- 2023-clients2$birth
+data <- merge(df1, clients2)
+head(data)
+```
+*Afin de faciliter la manipulation des données, décomposons les dates de notre dataframe :*
+
+```{r echo=TRUE}
+library(lubridate)
+library(zoo)
+
+data$date <- ymd(data$date)
+data$annee_mois <- data$date
+data$annee_mois <- format(data$annee_mois, "%Y-%m")
+data$annee_mois <- ym(data$annee_mois)
+data$jour <- mday(data$date)
+data$mois <- month(data$date)
+data$annee <- year(data$date)
+head(data)
+```
+
+*Nous venons d'ajouter des colonnes représentant les éléments qui composent les dates (jours, mois et années).*
+*Vérifions une nouvelle fois si nous avons des NAs :*
+
+```{r echo=TRUE}
+summary(data)
+```
+
+*Rien à signaler.*
+
+### Calculs autour du chiffre d'affaires
+
+```{r echo=TRUE}
+ca_total <- round(sum(data$price), digits = 2)
+ca_total
+
+nt_ventes <- length(data$session_id)
+nt_ventes
+
+panier_moyen <- mean(data$price)
+panier_moyen
+```
+
+*Le chiffre d'affaires global du site s'élève à environ 11 856 318€ sur un total de 679 332 transactions, soit un montant moyen de 17,45€ par transaction.*
+
+#### Calcul du chiffre d'affaires par année (calendaire)
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+data_per_year_c <- data %>% group_by(annee) %>% summarise(ca = sum(price), nb_ventes = n())
+data_per_year_c
+```
+
+*2022 étant la seule année civile complète de notre dataframe, il n'est pas surprenant que ce soit l'année ayant généré le plus de chiffre d'affaires et de ventes. Intéressons-nous donc plutôt aux ventes mensuelles.*
+
+#### Calcul du chiffre d'affaires par mois
+
+*Nous allons maintenant calculer le chiffre d'affaires classé par mois :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+library(tsibble)
+
+data_per_month <- unique(data %>% group_by(annee_mois) %>% summarise(annee=year(annee_mois), mois=month(annee_mois), ca = sum(price), nb_ventes = n()))
+data_per_month$annee_mois <- yearmonth(data_per_month$annee_mois)
+head(data_per_month)
+```
+
+*Représentons graphiquement ce dataframe afin de pouvoir observer l'évolution du chiffre d'affaires au cours des mois :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(ggplot2)
+library(hrbrthemes)
+
+data_per_month %>% 
+  tail(24) %>% 
+  ggplot(aes(x=annee_mois, y=ca, ymin=0, ymax=700000)) +
+    geom_line(color="grey") +
+    geom_point(shape=21, color="black", fill="#3398FF", size=3) +
+    xlab("Mois") +
+    ylab("Chiffre d'affaires") +
+    theme_ipsum() +
+    ggtitle("Évolution mensuelle du chiffre d'affaires")
+```
+
+*Jetons également un oeil à l'évolution du montant du panier moyen au cours des mois :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(ggplot2)
+library(hrbrthemes)
+
+data_per_month %>% 
+  tail(24) %>% 
+  ggplot(aes(x=annee_mois, y=ca/nb_ventes, ymin=0, ymax=25)) +
+    geom_line(color="grey") +
+    geom_point(shape=21, color="black", fill="#3398FF", size=3) +
+    xlab("Mois") +
+    ylab("Montant du panier moyen") +
+    theme_ipsum() +
+    ggtitle("Évolution mensuelle du panier moyen")
+```
+
+*Nous pouvons observer que le chiffre d'affaires et le montant du panier moyen ont connu une baisse au cours du mois d'octobre 2021. Essayons de comprendre à quoi peuvent être dûes ces importantes diminutions :*
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+
+data_per_month_categ <- data %>% group_by(categ, annee_mois) %>% summarise(ca=sum(price), nb_ventes=n())
+head(data_per_month_categ)
+```
+
+*Représentons ces résultats graphiquement afin de mieux les analyser :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(ggplot2)
+library(hrbrthemes)
+
+ggplot(data_per_month_categ, aes(fill=categ, y=ca, x=annee_mois)) +
+  geom_bar(stat="identity", position=position_dodge2()) +
+  xlab("Mois") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Répartition du chiffre d'affaires mensuel par catégorie")
+```
+
+
+```{r echo=TRUE}
+library(magrittr)
+library(ggplot2)
+library(hrbrthemes)
+
+ggplot(data_per_month_categ, aes(fill=categ, y=nb_ventes, x=annee_mois)) +
+  geom_bar(stat="identity", position=position_dodge2()) +
+  xlab("Mois") +
+  ylab("Nombre de ventes") +
+  theme_ipsum() +
+  ggtitle("Répartition des ventes mensuelles par catégorie")
+```
+
+*Nous pouvons clairement remarquer que les ventes de livres de la catégorie 1 ont subi une forte baisse au mois d'octobre 2021, baisse qui ne se retrouve pas plus tard. Il doit y avoir un problème au niveau des données qui ont été enregistrées.*
+
+
+#### Cas du mois d'octobre 2021
+
+*Penchons-nous plus particulièrement sur le mois d'octobre 2021 et sur les transactions qui ont été enregistrées sur cette période :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+ventes_oct21 <- data[(data$mois == "10" & data$annee == "2021"),] %>% group_by(categ, jour) %>% summarise(ca=sum(price), nb_ventes=n())
+head(ventes_oct21)
+```
+
+*Représentons ces données graphiquement en groupant par catégorie :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(graphics)
+
+par(mfrow=c(3,1))
+ventes_oct21 %>%
+  filter(categ == "0") %>%
+  ggplot(aes(x=jour, y=nb_ventes)) + 
+  geom_bar(stat = "identity", width=0.5, color="grey", fill="lightblue") +
+  xlab("Jour") +
+  ylab("Nombre de ventes") +
+  ggtitle("Ventes enregistrées en octobre 2021 (catégorie 0)") +
+  theme_ipsum()
+
+ventes_oct21 %>%
+  filter(categ == "1") %>%
+  ggplot(aes(x=jour, y=nb_ventes)) + 
+  geom_bar(stat = "identity", width=0.5, color="grey", fill="blue") +
+  xlab("Jour") +
+  ylab("Nombre de ventes") +
+  ggtitle("Ventes enregistrées en octobre 2021 (catégorie 1)") +
+  theme_ipsum()
+
+ventes_oct21 %>%
+  filter(categ == "2") %>%
+  ggplot(aes(x=jour, y=nb_ventes)) + 
+  geom_bar(stat = "identity", width=0.5, color="grey", fill="darkblue") +
+  xlab("Jour") +
+  ylab("Nombre de ventes") +
+  ggtitle("Ventes enregistrées en octobre 2021 (catégorie 2)") +
+  theme_ipsum()
+```
+
+*Aucune transaction n'a été enregistrée pour les livres de la catégorie 1 entre le 1er et le 28 octobre 2021 (ce qui est probablement dû à un problème d'acquisition des données), d'où la baisse significative de chiffre d'affaires sur ce mois.*
+
+
+#### Calcul du chiffre d'affaires par catégorie
+
+*Commençons par classer nos données par catégorie :*
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+
+data_per_cat <- data %>% group_by(categ) %>% summarise(ca = sum(price), prix_moyen = round(mean(price), digits = 2), prop_ca = round(ca/ca_total*100, digits = 2), nb_ventes = n(), prop_ventes = round(nb_ventes/679332*100, digits = 2))
+head(data_per_cat)
+```
+
+*Représentons graphiquement les répartitions de chiffres d'affaires et ventes par catégorie :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(ggplot2)
+library(hrbrthemes)
+library(graphics)
+
+par(mfrow=c(2,1))
+
+data_per_cat %>%
+  ggplot(aes(x="", y=prop_ca, fill=categ)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  ggtitle("Chiffre d'affaires par catégorie")
+
+data_per_cat %>%
+  ggplot(aes(x="", y=prop_ventes, fill=categ)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  ggtitle("Ventes par catégorie")
+```
+
+*La catégorie la plus vendue est la catégorie 0 alors que la moins vendue est la catégorie 2. En ce qui concerne la répartition du chiffre d'affaires, elle est beaucoup plus équilibrée que la répartition des ventes (cette différence est dûe aux écarts de prix constatés entre les catégories).*
+
+#### Évolution du chiffre d'affaires mensuel d'une année sur l'autre
+
+*Créons un dataframe nous permettant d'obtenir les ventes et chiffre d'affaires quotidiens :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+data_per_date <- data %>% group_by(date, annee, mois, jour) %>% summarise(ca = sum(price), nb_ventes = n())
+data_per_date$annee <- as.factor(data_per_date$annee)
+head(data_per_date)
+```
+
+*Comparons maintenant les chiffres d'affaires réalisés chaque mois sur les années N-1 et N :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(graphics)
+
+par(mfrow=c(3,4))
+
+data_per_date[(data_per_date$mois == "3"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de mars 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "4"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois d'avril 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "5"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de mai 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "6"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de juin 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "7"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de juillet 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "8"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois d'août 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "9"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de septembre 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "10"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois d'octobre 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "11"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de novembre 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "12"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de décembre 2021 et 2022") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "1"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de janvier 2022 et 2023") +
+    geom_line()
+
+data_per_date[(data_per_date$mois == "2"),] %>%
+  ggplot( aes(x=jour, y=ca, group=annee, color=annee)) +
+  xlab("Jour") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des mois de février 2022 et 2023") +
+    geom_line()
+```
+
+*Faisons de même pour l'intégralité des années N-1 et N :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(graphics)
+
+n_mois <- rep(c("01-Mar","02-Apr","03-May","04-Jun","05-Jul","06-Aug","07-Sep","08-Oct","09-Nov","10-Dec","11-Jan","12-Feb"),2)
+data_per_month$n_mois <- n_mois
+n_annee <- rep(c("Année 1", "Année 2"), each=12)
+data_per_month$n_annee <- n_annee
+
+data_per_month %>%
+  ggplot(aes(x=n_mois, y=ca, group=n_annee, color=n_annee)) +
+  xlab("Mois") +
+  ylab("Chiffre d'affaires") +
+  theme_ipsum() +
+  ggtitle("Ventes des années 2021 et 2022 (années glissantes)") +
+    geom_line()
+```
+
+*Nous pouvons observer que le chiffre d'affaires est relativement stable au cours de l'année et ne semble pas connaitre de phénomène de saisonnalité.*
+
+
+### Répartition du CA par client
+
+*Commençons par calculer le chiffre d'affaires par client :*
+
+```{r echo=TRUE}
+library(magrittr)
+library(dplyr)
+
+ca_per_client <- unique(data %>% group_by(client_id) %>% summarise(age=2023-birth, ca=sum(price), panier_moyen = round(mean(price), digits = 2), nb_achats = n()))
+ca_per_client <- arrange(ca_per_client, desc(ca_per_client$ca))
+lc_ca_client <- as.vector(cumsum(sort(ca_per_client$ca))/sum(ca_per_client$ca))
+```
+
+
+
+```{r echo=TRUE}
+library(ineq)
+
+lorenz_curve <- Lc(lc_ca_client, n=rep(1,8600), plot=FALSE)
+plot(lorenz_curve, xlab="Parts cumulées des achats", ylab="Parts cumulées du chiffre d'affaires", main="Répartition du chiffre d'affaires par client")
+```
+
+```{r echo=TRUE}
+library(DescTools)
+
+Gini(lc_ca_client, n=rep(1,8600))
+```
+
+### Petit zoom sur les clients
+
+```{r echo=TRUE}
+head(ca_per_client, n=10L)
+```
+
+*À en juger par le montant du chiffre d'affaires des 4 plus gros acheteurs ainsi que leurs nombres de commandes, nous pouvons supposer qu'il s'agisse de revendeurs. Il serait judicieux de leur proposer un accompagnement personnalisé dans la mesure où leurs besoins seront différents des besoins de clients particuliers.*
+
+### Petit zoom sur les produits
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+
+mean(produits[(produits$categ == "0"),]$price)
+mean(produits[(produits$categ == "1"),]$price)
+mean(produits[(produits$categ == "2"),]$price)
+```
+
+*Comme nous l'avions déjà constaté en comparant la répartition du chiffre d'afffaires ainsi que celle des ventes entre les différentes catégories, les écarts de prix moyens entre celles-ci sont plûtot importants (notamment entre les catégories 1 et 2 et la catégorie 3).* 
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+
+data_per_prod <- data %>% group_by(id_prod) %>% summarise(nb_ventes=n())
+```
+
+#### Top 10 des meilleures ventes
+
+```{r echo=TRUE}
+library(dplyr)
+
+top <- arrange(data_per_prod, desc(data_per_prod$nb_ventes))
+head(top, n=10L)
+```
+*Les 10 références les plus vendues appartiennent toutes à la catégorie 1.*
+
+#### Top 10 des plus mauvaises ventes
+
+```{r echo=TRUE}
+library(dplyr)
+
+flop <- arrange(data_per_prod, data_per_prod$nb_ventes)
+head(flop, n=10L)
+```
+*Les 10 références les moins vendues, quant à elles, appartiennent toutes à la catégorie 0.*
+
+### Evaluation de la tendance globale
+
+*Commençons par créer de nouveaux dataframes en ne sélectionnant que les colonnes qui nous intéressent :*
+
+```{r echo=TRUE}
+library(dplyr)
+
+dpm <- subset(data_per_month, select=c("annee_mois","ca","nb_ventes"))
+head(dpm)
+dpd <- subset(data_per_date, select=c("date", "ca", "nb_ventes"))
+head(dpd)
+```
+
+#### Décomposition en moyennes mobiles mensuelles 
+
+```{r echo=TRUE}
+library(stats)
+
+dpm_ts <- ts(dpm, frequency = 12)
+decompose(dpm_ts)
+plot(dpm_ts)
+```
+
+
+
+```{r echo=TRUE}
+library(zoo)
+
+rollmean(dpm_ts, 3)
+plot(rollmean(dpm_ts, 3))
+```
+
+#### Décomposition en moyennes mobiles quotidiennes
+
+```{r echo=TRUE}
+library(stats)
+
+dpd_ts <- ts(dpd, frequency = 365)
+decompose(dpd_ts)
+plot(dpd_ts)
+```
+
+```{r echo=TRUE}
+library(zoo)
+
+rollmean(dpd_ts, 3)
+plot(rollmean(dpd_ts, 3))
+```
+*Mise à part l'impact qu'ont eu les données manquantes du mois d'octobre 2021 sur nos moyennes mobiles (chiffre d'affaires et nombre de ventes), nous pouvons clairement voir que ni l'une ni l'autre ne semblent connaitre de phénomène de saisonnalité. De plus, ces moyennes mobiles nous démontrent parfaitement la relative stabilité du CA au cours du temps.*
+
+### Relation entre caractéristiques et comportements des clients
+
+#### Relation entre genre et catégories des livres achetés
+
+##### Test statistique
+
+```{r echo=TRUE}
+categ_genre <- table(data$categ, data$sex)
+categ_genre
+```
+
+*Nous pouvons déjà constater qu'il y a pratiquement autant de ventes chez les hommes que chez les femmes dans chaque catégorie*
+
+```{r echo=TRUE}
+library(questionr)
+
+lprop(categ_genre)
+```
+
+*Effectuons un test de Khi-Deux afin de vérifier quelle hypothèse nous allons accepter :*
+*Admettons en tant qu'hypothèse nulle (H0) que la catégorie des livres achetés est liée au genre du client.*
+*Admettons en tant qu'hypothèse alternative (H1) que la catégorie des livres achetés n'est pas liée au genre du client.*
+
+```{r echo=TRUE}
+library(stats)
+
+chisq.test(categ_genre)
+```
+
+*La p-value étant nettement inférieure à 5% ou 0.05, nous pouvons rejeter H0 et admettre que la catégorie des livres achetés n'est pas liée au genre du client.* 
+
+```{r echo=TRUE}
+library(questionr)
+
+chisq.residuals(categ_genre)
+```
+
+*Représentons graphiquement ces résultats afin de mieux les appréhender :*
+
+```{r echo=TRUE}
+library(graphics)
+
+mosaicplot(categ_genre, las = 3, shade = TRUE)
+```
+*Il n'y a pas de lien établi entre le genre du client et la catégorie des livres achetés.*
+
+##### Détermination graphique
+
+```{r echo=TRUE}
+data_f <- data[(data$sex == "f"),]
+data_m <- data[(data$sex == "m"),]
+head(data_f)
+head(data_m)
+```
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+
+data_m_categ <- data_m %>% group_by(categ) %>% summarise(nb_achats = n(), prop = round(nb_achats/340930*100, digits = 2))
+data_f_categ <- data_f %>% group_by(categ) %>% summarise(nb_achats = n(), prop = round(nb_achats/338402*100 , digits = 2))
+```
+
+```{r echo=TRUE}
+library(magrittr)
+library(ggplot2)
+library(hrbrthemes)
+library(graphics)
+
+par(mfrow=c(2,1))
+
+data_m_categ %>%
+  ggplot(aes(x="", y=prop, fill=categ)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  ggtitle("Proportion des ventes chez les hommes, par catégorie")
+data_f_categ %>%
+  ggplot(aes(x="", y=prop, fill=categ)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() +
+  ggtitle("Proportion des ventes chez les femmes, par catégorie")
+```
+
+*Il ne semble pas y avoir de lien établi entre le genre du client et les catégories des livres achetés.*
+
+#### Relation entre âge des clients et montant total des achats
+
+##### Test statistique
+
+*Étant donné la taille de notre échantillon et d'après la loi des grands nombres, nous pouvons supposer que la moyenne empirique tend vers l'espérance et donc vers une loi normale. Nous pouvons donc effectuer un test d'anova (analyse des variances) afin de vérifier quelle hypothèse nous allons accepter :*
+*L'hypothèse nulle (H0) dit que les moyennes de tous les groupes sont égales (le montant total des achats n'est pas lié à l'âge du client).*
+*L'hypothèse alternative (H1) dit que la moyenne d'au moins l'un des groupes est différente de celles des autres (le montant total des achats est lié à l'âge du client).*
+
+```{r echo=TRUE}
+library(onewaytests)
+
+aov.test(ca~factor(age), ca_per_client)
+```
+
+*La p-value étant largement supérieure à 5% ou 0.05, nous pouvons accepter H0 et admettre que le montant total des achats n'est pas lié à l'âge du client.* 
+
+*Pour vérification, utilisons la corrélation des rangs de Spearman (moins sensible aux valeurs extrêmes) :*
+
+```{r echo=TRUE}
+library(stats)
+
+cor(ca_per_client$age, ca_per_client$ca, method = "spearman")
+```
+
+*Nous avons bien la confirmation qu'il n'existe pas de lien entre âge et motant total des achats dans ce cas précis (la corrélation est plus proche de 0 que de 1 ou -1).*
+
+##### Détermination graphique
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(graphics)
+
+ca_per_client %>%
+  group_by(age) %>%
+  summarise(ca=mean(ca)) %>%
+  ggplot(aes(x=age, y=ca)) + 
+  geom_bar(stat = "identity", width=0.5, color="grey", fill="lightblue") +
+  xlab("Âge") +
+  ylab("Montant total des achats") +
+  ggtitle("Montant total des achats réalisé en fonction de l'âge (moyenne)") +
+  theme_ipsum()
+```
+
+*L'âge ne semble effectivement pas influencer le montant total des achats. En effet, bien que le montant total des achats des clients appartenant à la classe d'âge des actifs soit légèrement supérieur à celui des clients plus âgés, cette différence n'est pas suffisamment significative et nous pouvons clairement observer que les montants sont relativement bien équilibrés le long de l'axe des abscisses.*
+
+#### Relation entre âge des clients et taille du panier moyen
+
+##### Test statistique
+
+*Effectuons de nouveau un test d'analyse des variances afin de vérifier laquelle des 2 hypothèses nous allons accepter :*
+*L'hypothèse nulle (H0) dit que les moyennes de tous les groupes sont égales (la taille du panier moyen n'est pas liée à l'âge du client).*
+*L'hypothèse alternative (H1) dit que la moyenne d'au moins l'un des groupes est différente de celles des autres (la taille du panier moyen est liée à l'âge du client).*
+
+```{r echo=TRUE}
+library(onewaytests)
+
+aov.test(panier_moyen~factor(age), ca_per_client)
+```
+
+*La p-value étant nettement inférieure à 5% ou 0.05, nous pouvons rejeter H0 et admettre que la taille du panier moyen est liée à l'âge du client.* 
+
+*Pour vérification :*
+
+```{r echo=TRUE}
+library(stats)
+
+cor(ca_per_client$age, ca_per_client$panier_moyen)
+```
+
+*Cette fois, le coefficient de corrélation de Pearson nous indique la présence d'une faible corrélation linéaire négative (plus l'âge augmente, plus le montant du panier moyen diminue).*
+
+##### Détermination graphique
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(graphics)
+
+ca_per_client %>%
+  group_by(age) %>%
+  summarise(panier_moyen=mean(panier_moyen)) %>%
+  ggplot(aes(x=age, y=panier_moyen)) + 
+  geom_bar(stat = "identity", width=0.5, color="grey", fill="lightblue") +
+  xlab("Âge") +
+  ylab("Montant du panier moyen") +
+  ggtitle("Taille du panier moyen en fonction de l'âge (moyenne)") +
+  theme_ipsum()
+```
+*Le montant du panier moyen des clients les plus jeunes (jusqu'à environ 32 ans) est beaucoup plus élevé que celui des autres clients. Il représente plus du double de celui des autres clients.* 
+
+#### Relation entre âge des clients et fréquence d'achat
+
+##### Test Statistique
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+library(vctrs)
+
+frequence_mensuelle <- data %>% group_by(client_id, annee, mois) %>% summarise(nb_achats=vec_unique_count(session_id))
+frequence_mensuelle <- frequence_mensuelle %>% group_by(client_id) %>% summarise(freq_mensu_moyenne=nb_achats/342366)
+frequence_mensuelle <- merge(frequence_mensuelle, clients2)
+head(frequence_mensuelle)
+```
+
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+
+frequence_age <- frequence_mensuelle %>% group_by(age) %>% summarise(freq_mensuelle=round(sum(freq_mensu_moyenne), digits = 5))
+head(frequence_age)
+```
+
+*Effectuons un test de correlation afin de vérifier laquelle des 2 hypothèses nous allons rejeter :*
+*Admettons en tant qu'hypothèse nulle (H0) que la fréquence des achats n'est pas liée à l'âge du client.*
+*Admettons en tant qu'hypothèse alternative (H1) que la fréquence des achats est liée à l'âge du client.*
+
+```{r echo=TRUE}
+library(stats)
+
+cor.test(frequence_age$age, frequence_age$freq_mensuelle, method=c("pearson", "kendall", "spearman"), alternative="two.sided", conf.level=0.95)
+```
+
+*La p-value étant nettement inférieure à 5% ou 0.05, nous pouvons rejeter H0 et admettre que la fréquence des achats est liée à l'âge du client.* 
+
+##### Détermination graphique
+
+```{r echo=TRUE}
+plot(frequence_age$age, frequence_age$freq_mensuelle, xlab="Âge", ylab="Fréquence des achats", main="Fréquence mensuelle d'achat par âge")
+```
+
+*Au vu des des précédents graphiques, nous pouvons admettre qu'il existe effectivement une corrélation entre fréquence d'achat et âge. En effet nous avons pu constater que les clients les plus jeunes (les moins de 20 ans) et les clients les plus âgés (les plus de 60 ans) commandent moins et donc moins fréquemment que les clients appartenant aux catégories intermédiaires (entre 20 et 59 ans).*
+
+#### Relation entre âge des clients et catégories des livres achetés
+
+##### Test statistique
+
+*Effectuons un test de Kruskal-Wallis (test non paramétrique, n'induisant aucune loi et permettant de comparer 2 échantillons ou plus) afin de vérifier laquelle des 2 hypothèses nous allons rejeter :*
+*L'hypothèse nulle (H0) dit que les paramètres de la distribution sont les mêmes dans chaque groupe (la catégorie des livres achetés n'est pas liée à l'âge du client).*
+*L'hypothèse alternative (H1) dit que les paramètres de la distribution diffèrent dans au moins l'un des groupes (la catégorie des livres achetés est liée à l'âge du client dans au moins l'un des cas).*
+
+```{r echo=TRUE}
+library(stats)
+
+kruskal.test(data$age, data$categ)
+```
+
+*La p-value étant nettement inférieure à 5% ou 0.05, nous pouvons rejeter H0 et admettre que la catégorie des livres achetés est liée à l'âge du client.* 
+
+##### Détermination graphique
+
+```{r echo=TRUE}
+library(ggplot2)
+library(viridis)
+library(hrbrthemes)
+ 
+data %>%
+  ggplot(aes(x=categ, y=age, fill=categ)) +
+    geom_boxplot() +
+    scale_fill_viridis(discrete = TRUE, alpha=0.6, option="A") +
+    theme_ipsum() +
+    theme(legend.position="none", plot.title = element_text(size=11)) +
+    ggtitle("Répartition de l'âge des clients en fonction des catégories achetées") +
+    xlab("")
+```
+
+
+```{r echo=TRUE}
+categ <- rep(c("0" , "1" , "2"), 4)
+tranche_age <- c(rep("Moins de 20 ans", 3), rep("20 à 39 ans", 3), rep("40 à 59 ans", 3), rep("60 ans et plus", 3))
+nb_ventes <- c(3418, 5717, 6012, 131025, 60193, 27747, 239419, 107710, 1825, 41818, 53547, 899)
+proportion_ventes <- c(22.56, 37.75, 39.69, 59.84, 27.49, 12.67, 68.61, 30.87, 0.52, 43.44, 55.63, 0.93)
+
+data_categ_age <- data.frame(categ, tranche_age, nb_ventes, proportion_ventes)
+```
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(viridis)
+
+data_categ_age %>%
+  ggplot(aes(fill=categ, y=proportion_ventes, x=tranche_age)) +
+    geom_bar(position="fill", stat="identity") +
+    scale_fill_viridis(discrete = T, option = "G") +
+    xlab("Tranche d'âge") +
+    ylab("Proportion des ventes") +
+    ggtitle("Répartition des ventes par tranche d'âge") +
+    theme_ipsum()
+```
+*Les moins de 20 ans achètent majoritairement des livres correspondant à la catégorie 2. Nous pouvons également constater que plus l'âge augmente, moins la catégorie 2 est achetée.*
+
+```{r echo=TRUE}
+library(dplyr)
+library(magrittr)
+library(ggplot2)
+library(viridis)
+
+data_categ_age %>%
+  ggplot(aes(fill=tranche_age, y=nb_ventes, x=categ)) +
+    geom_bar(position="fill", stat="identity") +
+    scale_fill_viridis(discrete = T) +
+    xlab("Catégories") +
+    ylab("Proportion des ventes") +
+    ggtitle("Répartition des ventes par catégorie") +
+    theme_ipsum()
+```
+*Ce graphique nous montre, quant à lui, que les clients âgés de moins de 40 ans sont les principaux consommateurs de la catégorie 2 avec près de 90% des ventes réalisées (les adultes entre 20 et 39 ans représentants à eux seuls environ 75% des acheteurs).*
+
+### ARIMA
+
+*L'analyse des moyennes mobiles nous a permis d'affirmer que ni les ventes ni le chiffre d'affaires ne connaissent de phénomène de saisonnalité. Nous pouvons donc utiliser ARIMA afin de poursuivre notre analyse.*
+
+```{r echo=TRUE}
+library(tsibble)
+
+dpm2 <- dpm
+dpm2$annee_mois <- yearmonth(dpm2$annee_mois)
+```
+
+*Nous devons d’abord choisir les ordres p, d et q de notre modèle. Nous commençons par vérifier si la série doit être différenciée pour obtenir une série stationnaire.*
+*La fonction unitroot_ndiffs effectue un test statistique pour déterminer le nombre minimum de différenciations à réaliser.*
+
+```{r echo=TRUE}
+library(feasts)
+library(fabletools)
+
+unitroot_ndiffs(dpm2$ca)
+```
+
+*Ici, le résultat est 0 donc aucune différenciation n’est nécessaire (d=0).*
+
+```{r echo=TRUE}
+library(feasts)
+library(fabletools)
+
+dpm_tsb <- as_tsibble(dpm2)
+```
+
+
+```{r echo=TRUE}
+library(stats)
+
+acf(dpm_tsb$ca, lag.max = 12, type = "correlation")
+```
+
+*On voit que le CA d'un mois m n'influe pas sur le CA des mois suivants. Effectuons maintenant un test de stationarité (test de Dickey-Fuller) :*
+
+```{r echo=TRUE}
+library(tseries)
+
+adf.test(dpm_tsb$ca)
+```
+
+*L'hypothèse H0 est que la série comporte une racine unitaire (CA non stationnaire).*
+*L'hypothèse H1 est que la série ne comporte pas de racine unitaire (CA stationnaire).*
+*La p-value étant supérieure à 0,05, nous allons accepter H0 et admettre que le CA n'est pas stationnaire. Hors, la stationnarité étant une condition nécessaire pour représenter une série temporelle avec un modèle ARIMA, créons une série différenciée sur laquelle nous effectuerons un nouveau test de stationnarité.*
+
+```{r echo=TRUE}
+library(tseries)
+
+diff_ca <- dpm_tsb$ca[2:24]-dpm_tsb$ca[1:23]
+adf.test(diff_ca)
+```
+
+*Au vue de la valeur de la p-value, nous prendrons le parti d'accepter l'hypothèse H1 disant que la série ne comporte pas de racine unitaire et que, par conséquent, le CA est stationnaire.*
+*Nous pouvons donc poursuivre en réalisant nos prévisions sur diff_ca.*
+*Réalisons un nouveau test d'auto-corrélation :*
+
+```{r echo=TRUE}
+library(tseries)
+
+acf(diff_ca, lag.max = 12, type = "correlation")
+```
+
+*Sur diff_ca, nous pouvons observer un retard de 1.*
+*Voyons maintenant quel modèle ARIMA nous allons utiliser grâce à la fonction auto.arima qui va déterminer pour nous les valeurs de p, d et q :*
+
+```{r echo=TRUE}
+library(forecast)
+
+auto.arima(diff_ca)
+```
+
+```{r echo=TRUE}
+library(stats)
+
+arima(diff_ca, order=c(0,0,1))
+```
+
+
+
+```{r echo=TRUE}
+library(stats)
+
+residuals(arima(diff_ca, order=c(0,0,1)))
+```
+
+
+
+```{r echo=TRUE}
+library(stats)
+
+predict(arima(diff_ca, order=c(0,0,1)), n.ahead = 3)
+```
+
+```{r echo=TRUE}
+library(forecast)
+
+forecast(arima(diff_ca, order=c(0,0,1)), h=3)
+autoplot(forecast(arima(diff_ca, order=c(0,0,1)), h=3))
+```
+
+
